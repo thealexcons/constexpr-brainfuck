@@ -16,53 +16,60 @@ enum class Instruction {
     Jump                // ]
 };
 
-template <size_t Capacity>
+/* MaxCapacity is the maximum number of possible instructions in the program,
+ * which is just the length of the program string */
+template <size_t MaxCapacity>
 struct Program {
-    std::array<Instruction, Capacity> Instructions;
-    std::array<size_t, Capacity> JumpTargets;
+    std::array<Instruction, MaxCapacity> Instructions;
+    std::array<size_t, MaxCapacity> JumpTargets;
     size_t InstructionCount;
+};
 
-    void Execute(uint8_t* dataPtr) const {
-        auto instrPtr = 0u;
-        while (instrPtr < this->InstructionCount) {
-            switch (this->Instructions[instrPtr]) {
-                case Instruction::IncrementPtr:
-                    dataPtr++;
-                    instrPtr++;
-                    break;
-                case Instruction::DecrementPtr:
-                    dataPtr--;
-                    instrPtr++;
-                    break;
-                case Instruction::IncrementData:
-                    (*dataPtr)++;
-                    instrPtr++;
-                    break;
-                case Instruction::DecrementData:
-                    (*dataPtr)--;
-                    instrPtr++;
-                    break;
-                case Instruction::Read:
-                    *dataPtr = static_cast<uint8_t>(getchar());
-                    instrPtr++;
-                    break;
-                case Instruction::Write:
-                    putchar(*dataPtr);
-                    instrPtr++;
-                    break;
-                case Instruction::Jump:
-                    instrPtr = this->JumpTargets[instrPtr];
-                    break;
-                case Instruction::JumpIfZero:
-                    instrPtr = *dataPtr == 0 ? this->JumpTargets[instrPtr] : instrPtr + 1;
-                    break;
-                default:
-                    return;
-            }
+/* Since the instruction pointer only ever increments by a known constant at compile-time
+ * (specifically, 1) or jumps to another position which is also known at compile-time because
+ * of the constexpr parser, we can extract the instruction pointer to a template parameter instead.
+ * We can replace the switch statement with if constexpr statements to force the compiler to execute
+ * the tail-recursive function calls and generate the assembly code at compile-time. */
+template <const auto& Program, size_t InstrPtr = 0>
+constexpr void ExecuteProgram(uint8_t* dataPtr)  {
+    if constexpr (InstrPtr >= Program.InstructionCount) {
+        return;
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::IncrementPtr) {
+        dataPtr++;
+        return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::DecrementPtr) {
+        dataPtr--;
+        return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::IncrementData) {
+        (*dataPtr)++;
+        return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::DecrementData) {
+        (*dataPtr)--;
+        return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::Read) {
+        *dataPtr = static_cast<uint8_t>(getchar());
+        return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::Write) {
+        putchar(*dataPtr);
+        return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::Jump) {
+        return ExecuteProgram<Program, Program.JumpTargets[InstrPtr]>(dataPtr);
+
+    } else if constexpr (Program.Instructions[InstrPtr] == Instruction::JumpIfZero) {
+        if (*dataPtr == 0) {
+            return ExecuteProgram<Program, Program.JumpTargets[InstrPtr]>(dataPtr);
+        } else {
+            return ExecuteProgram<Program, InstrPtr+1>(dataPtr);
         }
     }
-
-};
+}
 
 
 // Compile-time parsing
@@ -89,12 +96,12 @@ constexpr Program<Len> ParseProgram(const char (&str)[Len]) {  // the (&str) syn
             jumpStack[jumpStackPtr++] = program.InstructionCount;
             program.Instructions[program.InstructionCount++] = Instruction::JumpIfZero;
         } else if (*ptr == ']') {
-            auto open = jumpStack[--jumpStackPtr];
-            auto close = program.InstructionCount++;
+            auto start = jumpStack[--jumpStackPtr];
+            auto end = program.InstructionCount++;
 
-            program.Instructions[close] = Instruction::Jump;
-            program.JumpTargets[close] = open;
-            program.JumpTargets[open] = close + 1;
+            program.Instructions[end] = Instruction::Jump;
+            program.JumpTargets[end] = start;
+            program.JumpTargets[start] = end + 1;
         }
     }
 
